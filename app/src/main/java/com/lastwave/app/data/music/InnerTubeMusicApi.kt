@@ -2902,7 +2902,8 @@ class InnerTubeMusicApi @Inject constructor(
                     kotlinx.coroutines.withTimeoutOrNull(VISITOR_BOOTSTRAP_BUDGET_MS) {
                         getWebConfig()
                     }?.visitorData
-                }.getOrNull() ?: visitorData
+                }.getOrNull()?.takeIf { it.isNotBlank() && it != FALLBACK_TOKEN_SESSION }
+                    ?: visitorData
             }
             noteAttempt("direct-fast=visitor-${if (!visitorData.isNullOrBlank()) "ok" else "missing"}")
         }
@@ -3682,10 +3683,17 @@ class InnerTubeMusicApi @Inject constructor(
 
     private fun findConfig(html: String, key: String): String? {
         if (html.isBlank()) return null
-        val escaped = Regex("\\\"$key\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")
-            .find(html)?.groupValues?.getOrNull(1)
-        return escaped
-            ?.replace("\\u003d", "=")
+        // YouTube may emit ytcfg as JSON, JavaScript object literals, or
+        // escaped JSON inside a string. Accept both quote styles and do not
+        // treat an empty visitor id as a successful bootstrap.
+        val quotedKey = Regex.escape(key)
+        val patterns = listOf(
+            Regex("""["']$quotedKey["']\\s*:\\s*["']([^"'\\\\]+)["']"""),
+            Regex("""\\b$quotedKey\\b\\s*:\\s*["']([^"'\\\\]+)["']"""),
+        )
+        return patterns.firstNotNullOfOrNull { pattern ->
+            pattern.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+        }?.replace("\\u003d", "=")
             ?.replace("\\x3d", "=")
             ?.replace("\\/", "/")
     }
