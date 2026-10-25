@@ -2911,6 +2911,14 @@ class InnerTubeMusicApi @Inject constructor(
         // cache hits in milliseconds (engine is pre-warmed at startup) and
         // anything slower proceeds without a token instead of stalling audio.
         val poToken = fastPoToken(videoId, visitorData)
+        // Namida exposes visitor and PoToken configuration separately. Record
+        // which part of our anonymous session is missing without logging
+        // sensitive token values, so a failed stream can be diagnosed.
+        noteAttempt(
+            "direct-fast=auth-material visitor=${if (visitorData.isNullOrBlank()) "missing" else "present"}" +
+                " player-token=${if (poToken?.playerToken.isNullOrBlank()) "missing" else "present"}" +
+                " gvs-token=${if (poToken?.sessionToken.isNullOrBlank()) "missing" else "present"}"
+        )
         val nowMs = System.currentTimeMillis()
         val ordered = DIRECT_FAST_CLIENT_ORDER
             .mapNotNull { name -> PLAYER_CLIENTS.firstOrNull { it.name == name } }
