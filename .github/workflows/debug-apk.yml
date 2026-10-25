@@ -28,13 +28,12 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-37 build-tools;35.0.0 cmdline-tools;latest'
-      - name: Install native build tools
+      # The hosted runner has the Android SDK. Gradle installs the
+      # compileSdk platform it needs, as the existing CI already does.
+      - name: Show Android SDK configuration
         run: |
-          sdkmanager --install "cmake;3.22.1" "ndk;27.2.12479018"
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+          ls -1 "${ANDROID_HOME}/platforms" || true
       - name: Build debug APK
         run: |
           chmod +x gradlew
