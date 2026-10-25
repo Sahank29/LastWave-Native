@@ -3688,8 +3688,8 @@ class InnerTubeMusicApi @Inject constructor(
         // treat an empty visitor id as a successful bootstrap.
         val quotedKey = Regex.escape(key)
         val patterns = listOf(
-            Regex("""["']$quotedKey["']\\s*:\\s*["']([^"'\\\\]+)["']"""),
-            Regex("""\\b$quotedKey\\b\\s*:\\s*["']([^"'\\\\]+)["']"""),
+            Regex("""["']$quotedKey["']\s*:\s*["']([^"'\\]+)["']"""),
+            Regex("""\b$quotedKey\b\s*:\s*["']([^"'\\]+)["']"""),
         )
         return patterns.firstNotNullOfOrNull { pattern ->
             pattern.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
