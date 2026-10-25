@@ -2955,7 +2955,11 @@ class InnerTubeMusicApi @Inject constructor(
                 lastSuccessfulClientName = client.name
                 return stream
             }
-            if (!failed) noteAttempt("client=${client.name} outcome=timeout")
+            if (!failed) noteAttempt("client=${client.name} outcome=empty-or-timeout")
+            // A client that returned no playable stream should not be retried
+            // immediately on the next tap. Other extractors remain available.
+            failedClientsUntil[clientFailureKey(videoId, client.key, authScope)] =
+                System.currentTimeMillis() + CLIENT_COOLDOWN_MS
         }
         noteAttempt("direct-fast=exhausted")
         return null
