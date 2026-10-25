@@ -28,10 +28,13 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: Install Android SDK packages
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37 build-tools;35.0.0 cmdline-tools;latest'
+      - name: Install native build tools
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-37" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+          sdkmanager --install "cmake;3.22.1" "ndk;27.2.12479018"
       - name: Build debug APK
         run: |
           chmod +x gradlew
