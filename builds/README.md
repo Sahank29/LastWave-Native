@@ -1,11 +1,11 @@
 # Builds
 
-- **Release Artifact:** `LastWave-v5.0.0-release.apk`
+- **Release Artifact:** `LastWave-v5.0.0-0.0.1-release.apk`
   - Variant: `release` (`:app:assembleRelease`)
   - Optimizations: R8 code shrinking, dead-code elimination, resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`)
-- **Debug Artifact:** `LastWave-v5.0.0-debug.apk`
+- **Debug Artifact:** `LastWave-v5.0.0-0.0.1-debug.apk`
   - Variant: `debug` (`:app:assembleDebug`)
   - Uncompressed full DEX with all debug symbols, no R8 shrinking
-- **Version:** `5.0.0` (versionCode `27`)
+- **Version:** `5.0.0-0.0.1` (upstream `5.0.0`, fork `0.0.1`; versionCode `27001` = upstream code `27` × 1000 + fork release `001`)
 - **Feature:** Full Screen Cover Art implementation (static & animated canvas full-bleed hero with dynamic bottom fade and scrim protection)
 - **Toolchain:** Gradle 9.3.1, OpenJDK 17, Android compileSdk 37, targetSdk 35, minSdk 29

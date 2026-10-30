@@ -87,9 +87,9 @@ class AppUpdateManager @Inject constructor(
     }
 
     fun getCurrentVersion(): String = try {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "5.0.0"
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "5.0.0-0.0.1"
     } catch (_: Exception) {
-        "5.0.0"
+        "5.0.0-0.0.1"
     }
 
     fun checkForUpdate(isSilent: Boolean = false) {
