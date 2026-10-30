@@ -31,6 +31,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Deferred
@@ -127,13 +128,14 @@ class HomeRepository @Inject constructor(
         // There is no stale response cache here: entries exist only while a
         // real request is running. Even forced refreshes should join that
         // request instead of starting a duplicate when poll timers overlap.
-        val deferred = inFlightRecent.getOrPut(cacheKey) {
-            inFlightScope.async {
+        val deferred = inFlightRecent.computeIfAbsent(cacheKey) {
+            // Insert before starting: the progressive preview and full Home
+            // load can arrive together and must share one network request.
+            inFlightScope.async(start = CoroutineStart.LAZY) {
                 fetchRecentTracksInternal(session, targetUser, page, limit)
-            }.also { d ->
-                d.invokeOnCompletion { inFlightRecent.remove(cacheKey, d) }
             }
         }
+        deferred.invokeOnCompletion { inFlightRecent.remove(cacheKey, deferred) }
         return deferred.await()
     }
 
@@ -519,7 +521,7 @@ class HomeRepository @Inject constructor(
 
     private suspend fun fetchInitialDataInternal(username: String): Result<HomeInitialData> = try {
         coroutineScope {
-            val recentDeferred = async(Dispatchers.IO) { fetchRecentTracks(limit = 200, username = username) }
+            val recentDeferred = async(Dispatchers.IO) { fetchRecentTracks(limit = 50, username = username) }
             val statsDeferred = async(Dispatchers.IO) { fetchStats(username = username) }
             val topTracksDeferred = async(Dispatchers.IO) { fetchTopTracksOverall(username = username) }
 

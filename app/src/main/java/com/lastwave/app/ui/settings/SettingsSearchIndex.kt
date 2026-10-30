@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwitchAccount
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Timer
@@ -98,8 +100,36 @@ object SettingsSearchIndex {
     val allEntries: List<SettingsEntry> by lazy {
         buildList {
             // ==========================================
-            // TAB: AUDIO & PLAYBACK
+            // TAB: CUSTOM PLAYBACK + AUDIO
             // ==========================================
+            add(
+                SettingsEntry(
+                    id = "audio.quick_start",
+                    title = "Start playback faster",
+                    subtitle = "Start with available audio or wait for lossless quality",
+                    keywords = listOf("playback", "startup", "fast", "lossless", "buffering", "wait", "quality"),
+                    icon = Icons.Filled.Speed,
+                    iconContainer = { MaterialTheme.colorScheme.secondaryContainer },
+                    iconTint = { MaterialTheme.colorScheme.onSecondaryContainer },
+                    parentTab = SettingsTab.SAHANK29,
+                    section = "Playback",
+                    type = EntryType.TOGGLE,
+                )
+            )
+            add(
+                SettingsEntry(
+                    id = "audio.cellular_lossless_upgrade",
+                    title = "Allow lossless upgrades over cellular",
+                    subtitle = "Choose whether automatic lossless upgrades may use mobile data",
+                    keywords = listOf("cellular", "mobile data", "metered", "lossless", "upgrade", "streaming"),
+                    icon = Icons.Filled.SignalCellularAlt,
+                    iconContainer = { MaterialTheme.colorScheme.secondaryContainer },
+                    iconTint = { MaterialTheme.colorScheme.onSecondaryContainer },
+                    parentTab = SettingsTab.SAHANK29,
+                    section = "Playback",
+                    type = EntryType.TOGGLE,
+                )
+            )
             add(
                 SettingsEntry(
                     id = "audio.streaming_quality",

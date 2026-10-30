@@ -94,6 +94,10 @@ data class MiscSettings(
     /** When true, the player attempts to resolve and stream lossless / Hi-Res audio
      *  directly from lossless CDN when a high-confidence match exists. Falls back to YouTube Music. */
     val preferLosslessStreaming: Boolean = true,
+    /** Start a cached/YouTube stream first and upgrade to lossless after playback starts. */
+    val startPlaybackQuickly: Boolean = true,
+    /** Allow automatic lossless upgrades while the active network is cellular. */
+    val allowLosslessUpgradeOnCellular: Boolean = true,
     /** When true, the player also queries installed provider modules in
      *  parallel with the addon; a module hit plays instantly on miss. */
     val preferProviderModules: Boolean = true,
@@ -295,6 +299,8 @@ class SettingsPreferences @Inject constructor(
         val USE_BOLD_FONT = booleanPreferencesKey("lw_use_bold_font")
         val PINNED_FRIENDS = stringSetPreferencesKey("lw_pinned_friends")
         val PREFER_LOSSLESS_STREAMING = booleanPreferencesKey("lw_prefer_lossless_streaming")
+        val START_PLAYBACK_QUICKLY = booleanPreferencesKey("lw_start_playback_quickly")
+        val ALLOW_LOSSLESS_UPGRADE_CELLULAR = booleanPreferencesKey("lw_lossless_upgrade_cellular")
         val PREFER_PROVIDER_MODULES = booleanPreferencesKey("lw_prefer_provider_modules")
         val LOSSLESS_QUALITY = intPreferencesKey("lw_lossless_quality")
         val DOWNLOAD_QUALITY = intPreferencesKey("lw_download_quality")
@@ -387,6 +393,8 @@ class SettingsPreferences @Inject constructor(
                 useBoldFont = p.readSafely(Keys.USE_BOLD_FONT) ?: false,
                 pinnedFriends = p.readSafely(Keys.PINNED_FRIENDS) ?: emptySet(),
                 preferLosslessStreaming = p.readSafely(Keys.PREFER_LOSSLESS_STREAMING) ?: true,
+                startPlaybackQuickly = p.readSafely(Keys.START_PLAYBACK_QUICKLY) ?: true,
+                allowLosslessUpgradeOnCellular = p.readSafely(Keys.ALLOW_LOSSLESS_UPGRADE_CELLULAR) ?: true,
                 preferProviderModules = p.readSafely(Keys.PREFER_PROVIDER_MODULES) ?: true,
                 losslessQuality = p.readSafely(Keys.LOSSLESS_QUALITY)?.takeIf { it in LOSSLESS_QUALITIES } ?: 27,
                 downloadQuality = p.readSafely(Keys.DOWNLOAD_QUALITY)?.takeIf { it in DOWNLOAD_QUALITIES } ?: 27,
@@ -621,6 +629,14 @@ class SettingsPreferences @Inject constructor(
         dataStore.edit {
             it[Keys.PREFER_LOSSLESS_STREAMING] = enabled
         }
+    }
+
+    suspend fun setStartPlaybackQuickly(enabled: Boolean) {
+        dataStore.edit { it[Keys.START_PLAYBACK_QUICKLY] = enabled }
+    }
+
+    suspend fun setAllowLosslessUpgradeOnCellular(enabled: Boolean) {
+        dataStore.edit { it[Keys.ALLOW_LOSSLESS_UPGRADE_CELLULAR] = enabled }
     }
 
     suspend fun setPreferProviderModules(enabled: Boolean) {

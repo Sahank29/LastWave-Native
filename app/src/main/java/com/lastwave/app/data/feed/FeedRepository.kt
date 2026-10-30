@@ -34,6 +34,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
@@ -236,6 +237,43 @@ class FeedRepository @Inject constructor(
             } else emptyList()
         }
 
+        // Let the first usable source paint Home; recommendations, friends,
+        // charts and artist enrichment can finish on a slower connection later.
+        val previewLock = Any()
+        var preview = previous ?: FeedData(
+            isYtConnected = isYtConnected,
+            ytAccountName = connection.accountName.takeIf { isYtConnected },
+            userName = username,
+        )
+        fun publishPreview(update: (FeedData) -> FeedData) {
+            synchronized(previewLock) {
+                preview = update(preview)
+                onUpdate(preview)
+            }
+        }
+        val previewJobs = listOf(
+            launch {
+                val page = homePageDef.await()
+                if (page.shelves.isNotEmpty()) publishPreview {
+                    it.copy(nativeShelves = page.shelves, homeChips = page.chips,
+                        homeContinuationToken = page.continuationToken)
+                }
+            },
+            launch {
+                val songs = homeSongsDef.await()
+                if (songs.isNotEmpty()) publishPreview { it.copy(quickPicks = songs.take(20)) }
+            },
+            launch {
+                val local = localLibraryDef.await()
+                if (local.isNotEmpty()) publishPreview {
+                    it.copy(quickPicks = local.take(20).map { track ->
+                        YouTubeMusicTrack(track.youtubeVideoIdOrNull().orEmpty(), track.name,
+                            track.artist, track.album, track.artworkUrl)
+                    })
+                }
+            },
+        )
+
         val releaseCandidates = newReleasesDef.await()
         val charts = chartsDef.await()
         val homePlaylists = homeMixesDef.await().filter {
@@ -255,6 +293,7 @@ class FeedRepository @Inject constructor(
         val likedSongsId = likedSongsIdDef.await()
 
         val localLibrary = localLibraryDef.await()
+        previewJobs.forEach { it.cancel() }
         val localQuickPicks = localLibrary.map {
             YouTubeMusicTrack(it.youtubeVideoIdOrNull().orEmpty(), it.name, it.artist, it.album, it.artworkUrl)
         }

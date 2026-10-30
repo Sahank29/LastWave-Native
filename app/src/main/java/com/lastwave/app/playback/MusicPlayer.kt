@@ -269,6 +269,7 @@ class MusicPlayer @Inject constructor(
     private val lyricsRepository: dagger.Lazy<com.lastwave.app.data.lyrics.LyricsRepository>,
     private val jamRepository: dagger.Lazy<com.lastwave.app.data.jam.JamRepository>,
     private val autoMixCoordinator: dagger.Lazy<com.lastwave.app.playback.automix.engine.DualDeckTransportCoordinator>,
+    private val networkMonitor: com.lastwave.app.data.network.NetworkMonitor,
 ) {
 
     private val appContext = context.applicationContext
@@ -5066,9 +5067,7 @@ class MusicPlayer @Inject constructor(
             preloadJob?.cancel()
             preloadJob = applicationScope.launch(Dispatchers.IO) {
                 val misc = runCatching { settingsPreferences.settings.first() }.getOrDefault(MiscSettings())
-                val wantLossless = misc.preferLosslessStreaming &&
-                    misc.losslessQuality != LosslessMusicApi.QUALITY_YOUTUBE &&
-                    !losslessMusicApi.isCoolingDown
+                val wantLossless = canAutomaticallyResolveLossless(misc)
 
                 var losslessResolved: ResolvedStream? = null
                 if (wantLossless) {
@@ -5138,9 +5137,7 @@ class MusicPlayer @Inject constructor(
         preloadJob?.cancel()
         preloadJob = applicationScope.launch(Dispatchers.IO) {
             val misc = runCatching { settingsPreferences.settings.first() }.getOrDefault(MiscSettings())
-            val wantLossless = misc.preferLosslessStreaming &&
-                misc.losslessQuality != LosslessMusicApi.QUALITY_YOUTUBE &&
-                !losslessMusicApi.isCoolingDown
+            val wantLossless = canAutomaticallyResolveLossless(misc)
 
             var losslessResolved: ResolvedStream? = null
             if (wantLossless) {
@@ -6719,10 +6716,8 @@ class MusicPlayer @Inject constructor(
      */
     private enum class LosslessBudget {
         /**
-         * Interactive playback: give up quickly so the user hears *something*.
-         * The module chain is several round trips (up to four searches plus a
-         * stream fetch per quality tier), so this regularly expires on slow
-         * links â€” which is the right trade when a track is already playing.
+         * Interactive playback: start a cached/YouTube stream first and let
+         * the existing background upgrade job find the preferred quality.
          */
         Interactive,
 
@@ -6791,10 +6786,9 @@ class MusicPlayer @Inject constructor(
     /**
      * Resolves audio stream for playback.
      *
-     * For interactive starts (first track or explicit queue tap), if lossless streaming
-     * is preferred, allocates up to 5 seconds to resolve lossless FLAC directly at 0:00.
-     * If lossless resolves in time, playback begins immediately in lossless.
-     * Otherwise, falls back to YouTube Opus without delaying playback further.
+     * The quick-start preference uses cached/YouTube audio first and upgrades
+     * after playback starts. When it is disabled, an interactive start waits
+     * briefly for the preferred lossless stream before using its cached fallback.
      */
     private suspend fun resolveRemoteTrackAudioStream(
         track: PlayableTrack,
@@ -6818,17 +6812,30 @@ class MusicPlayer @Inject constructor(
             }
         }
 
-        // 2. 5-second lossless window for first/interactive track. Recovery
-        // paths pass LosslessBudget.Disabled so the module chain never delays
-        // the stream that has to replace a dead one.
         val misc = runCatching { settingsPreferences.settings.first() }.getOrDefault(MiscSettings())
+        PlaybackStartupLog.cacheLookupStart()
+        val cached = identity?.let { streamResolver.cache.get(it) }?.takeIf { it.matches(identity) }
+        PlaybackStartupLog.cacheLookupEnd(hit = cached != null)
+        if (misc.startPlaybackQuickly && cached != null && identity != null) {
+            if (claimPlayback) {
+                streamResolver.playback.begin(identity)
+            }
+            return acceptResolvedIdentity(track, identity, cached, claimPlayback = claimPlayback)
+        }
+
+        // Read the playback policy once so the quick-start and lossless-first
+        // paths use the same setting value for this selection.
         val wantLossless = allowLossless &&
             misc.preferLosslessStreaming &&
             misc.losslessQuality != LosslessMusicApi.QUALITY_YOUTUBE &&
             !losslessMusicApi.isCoolingDown &&
+            (!networkMonitor.isOnCellular() || misc.allowLosslessUpgradeOnCellular) &&
             losslessBudget != LosslessBudget.Disabled
 
-        if (wantLossless) {
+        val waitForLossless = wantLossless &&
+            (losslessBudget == LosslessBudget.Unbounded ||
+                (losslessBudget == LosslessBudget.Interactive && !misc.startPlaybackQuickly))
+        if (waitForLossless) {
             val expectedSec = (track.durationMs?.takeIf { it > 0 })?.div(1_000)?.toInt()
             val timeoutMs = when (losslessBudget) {
                 LosslessBudget.Interactive -> 5_000L
@@ -6868,49 +6875,62 @@ class MusicPlayer @Inject constructor(
             )
         }
 
-        PlaybackStartupLog.cacheLookupStart()
-        val cached = identity?.let { streamResolver.cache.get(it) }?.takeIf { it.matches(identity) }
-        PlaybackStartupLog.cacheLookupEnd(hit = cached != null)
-        if (cached != null && identity != null) {
-            if (claimPlayback) {
-                streamResolver.playback.begin(identity)
-            }
+        // When fast start is disabled, honor the lossless-first preference,
+        // then use the cached YouTube stream if the provider window expires.
+        if (!misc.startPlaybackQuickly && cached != null && identity != null) {
+            if (claimPlayback) streamResolver.playback.begin(identity)
             return acceptResolvedIdentity(track, identity, cached, claimPlayback = claimPlayback)
         }
-        return coroutineScope {
-            val localQuick = async(Dispatchers.IO) {
-                if (!allowLocalDownloads) null
-                else runCatching { resolveLocalDownloadedAudioStream(track, deepScan = true) }.getOrNull()
-            }
-            val youtube = async(Dispatchers.IO) {
-                resolveYoutubeTrackAudioStream(track, videoId, claimPlayback = claimPlayback)
-            }
-            while (true) {
-                ensureActive()
-                val localDone = localQuick.isCompleted
-                val youtubeDone = youtube.isCompleted
-                when {
-                    localDone && youtubeDone -> {
-                        val local = localQuick.await()
-                        if (local != null) return@coroutineScope local
-                        return@coroutineScope youtube.await()
-                    }
-                    localDone -> {
-                        val local = localQuick.await()
-                        if (local != null) {
-                            youtube.cancel()
-                            return@coroutineScope local
-                        }
-                        return@coroutineScope youtube.await()
-                    }
-                    youtubeDone -> {
-                        localQuick.cancel()
-                        return@coroutineScope youtube.await()
-                    }
+
+        return try {
+            coroutineScope {
+                val localQuick = async(Dispatchers.IO) {
+                    if (!allowLocalDownloads) null
+                    else runCatching { resolveLocalDownloadedAudioStream(track, deepScan = true) }.getOrNull()
                 }
-                delay(5)
+                val youtube = async(Dispatchers.IO) {
+                    resolveYoutubeTrackAudioStream(track, videoId, claimPlayback = claimPlayback)
+                }
+                while (true) {
+                    ensureActive()
+                    val localDone = localQuick.isCompleted
+                    val youtubeDone = youtube.isCompleted
+                    when {
+                        localDone && youtubeDone -> {
+                            val local = localQuick.await()
+                            if (local != null) return@coroutineScope local
+                            return@coroutineScope youtube.await()
+                        }
+                        localDone -> {
+                            val local = localQuick.await()
+                            if (local != null) {
+                                youtube.cancel()
+                                return@coroutineScope local
+                            }
+                            return@coroutineScope youtube.await()
+                        }
+                        youtubeDone -> {
+                            localQuick.cancel()
+                            return@coroutineScope youtube.await()
+                        }
+                    }
+                    delay(5)
+                }
+                error("Playback resolve race ended unexpectedly")
             }
-            error("Playback resolve race ended unexpectedly")
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            // YouTube may be unavailable for this track/account. Preserve the
+            // provider fallback, but pay its latency only after the fast source fails.
+            if (!misc.startPlaybackQuickly || !wantLossless || losslessBudget != LosslessBudget.Interactive) throw error
+            withTimeoutOrNull(10_000L) {
+                resolveLosslessTrackAudioStream(
+                    track = track,
+                    misc = misc,
+                    excludedLosslessUrls = excludedLosslessUrls,
+                    expectedDurationSeconds = track.durationMs?.takeIf { it > 0 }?.div(1_000)?.toInt(),
+                )
+            } ?: throw error
         }
     }
 
@@ -7439,13 +7459,19 @@ class MusicPlayer @Inject constructor(
         activeUpgradeJob?.cancel()
         activeUpgradeMediaId = expectedMediaId
         activeUpgradeJob = applicationScope.launch(Dispatchers.IO) {
+            // On slow links the first audio buffer needs the bandwidth first.
+            // Do not start provider searches/audition downloads while it loads.
+            state.first {
+                it.current?.mediaIdKey() == expectedMediaId && it.isPlaying && !it.isBuffering
+            }
+            currentCoroutineContext().ensureActive()
+            if (generation != playRequestGeneration.get()) return@launch
             val misc = runCatching { settingsPreferences.settings.first() }.getOrDefault(MiscSettings())
-            val wantLossless = misc.preferLosslessStreaming &&
-                misc.losslessQuality != LosslessMusicApi.QUALITY_YOUTUBE
-            if (!wantLossless || losslessMusicApi.isCoolingDown) {
+            val wantLossless = canAutomaticallyResolveLossless(misc)
+            if (!wantLossless) {
                 android.util.Log.i(
                     "MusicPlayer",
-                    "[STREAM UPGRADE] skipped '${track.title}' prefer=${misc.preferLosslessStreaming} quality=${misc.losslessQuality} cooling=${losslessMusicApi.isCoolingDown}",
+                    "[STREAM UPGRADE] skipped '${track.title}' prefer=${misc.preferLosslessStreaming} quality=${misc.losslessQuality} cooling=${losslessMusicApi.isCoolingDown} cellular=${networkMonitor.isOnCellular()} allowCellular=${misc.allowLosslessUpgradeOnCellular}",
                 )
                 return@launch
             }
@@ -7673,6 +7699,13 @@ class MusicPlayer @Inject constructor(
             }
         }
     }
+
+    /** Lossless preloads and background upgrades obey the user's mobile-data choice. */
+    private fun canAutomaticallyResolveLossless(misc: MiscSettings): Boolean =
+        misc.preferLosslessStreaming &&
+            misc.losslessQuality != LosslessMusicApi.QUALITY_YOUTUBE &&
+            !losslessMusicApi.isCoolingDown &&
+            (!networkMonitor.isOnCellular() || misc.allowLosslessUpgradeOnCellular)
 
     private suspend fun auditionStream(
         track: PlayableTrack,

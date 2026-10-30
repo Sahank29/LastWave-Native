@@ -519,6 +519,8 @@ class SettingsViewModel @Inject constructor(
     fun setUseCustomFont(enabled: Boolean) = launchSettingsAction("update the app font") { settingsPreferences.setUseCustomFont(enabled) }
     fun setUseBoldFont(enabled: Boolean) = launchSettingsAction("update font weight") { settingsPreferences.setUseBoldFont(enabled) }
     fun setPreferLosslessStreaming(enabled: Boolean) = launchSettingsAction("update streaming preference") { settingsPreferences.setPreferLosslessStreaming(enabled) }
+    fun setStartPlaybackQuickly(enabled: Boolean) = launchSettingsAction("update fast playback preference") { settingsPreferences.setStartPlaybackQuickly(enabled) }
+    fun setAllowLosslessUpgradeOnCellular(enabled: Boolean) = launchSettingsAction("update cellular lossless upgrade preference") { settingsPreferences.setAllowLosslessUpgradeOnCellular(enabled) }
     fun setLosslessQuality(quality: Int) = launchSettingsAction("update streaming quality") { settingsPreferences.setLosslessQuality(quality) }
     fun setDownloadQuality(quality: Int) = launchSettingsAction("update download quality") { settingsPreferences.setDownloadQuality(quality) }
     fun setStudioMasterClarity(enabled: Boolean) {
