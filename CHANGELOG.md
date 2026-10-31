@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.0-0.1.0] - 2026-10-31
+
+### Added & Improved
+- **Cellular Lossless Upgrade:** Added an option to automatically upgrade to lossless audio over cellular data while keeping the existing Wi-Fi behavior unchanged.
+- **Faster Playback Startup:** Reduced delay between tapping a track and playback beginning.
+- **Faster Loading:** Improved feed loading responsiveness and reduced unnecessary blocking work.
+
 ## [5.0.0] - 2026-10-30
 
 ### Added & Improved
