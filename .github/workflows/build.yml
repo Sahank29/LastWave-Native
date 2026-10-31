@@ -18,6 +18,8 @@ jobs:
     name: Build Release APK
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/sahank29-main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
       ADDON_CLIENT_SECRET: ${{ secrets.ADDON_CLIENT_SECRET }}
@@ -83,6 +85,49 @@ jobs:
           fi
           (cd final_apk && sha256sum *.apk > SHA256SUMS.txt)
           cat final_apk/SHA256SUMS.txt
+
+      - name: Prepare release description
+        if: github.event_name == 'push' && github.ref == 'refs/heads/sahank29-main'
+        id: release_meta
+        run: |
+          VERSION="${{ steps.prep_apk.outputs.version }}"
+          TAG="v${VERSION}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" {capture=1; next}
+            capture && /^## \[/ {exit}
+            capture {print}
+          ' CHANGELOG.md > changelog_section.md
+
+          {
+            echo "## LastWave ${VERSION}"
+            echo
+            if [ -s changelog_section.md ]; then
+              echo "### Changelog"
+              echo
+              cat changelog_section.md
+            else
+              echo "- Automated release for commit \`${GITHUB_SHA}\`."
+            fi
+            echo
+            echo "### Artifacts"
+            echo
+            echo "- APK packages and \`SHA256SUMS.txt\` are attached to this release."
+          } > release_body.md
+
+      - name: Create Git tag and GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/sahank29-main'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: LastWave v${{ steps.prep_apk.outputs.version }}
+          body_path: release_body.md
+          files: |
+            final_apk/*.apk
+            final_apk/SHA256SUMS.txt
+          draft: false
+          prerelease: false
 
       - name: Upload Release APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
