@@ -16,13 +16,15 @@ import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import com.lastwave.app.data.ytmusic.YtMusicAuthManager
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Small compatibility boundary for InnerTubeX. The published 0.4.x artifact
+ * Small compatibility boundary for InnerTubeX. The published artifact
  * is built with a newer Kotlin metadata version than the app, so this adapter
  * calls its public API reflectively while keeping the rest of the player typed.
  */
@@ -31,10 +33,31 @@ class InnerTubeXStreamExtractor @Inject constructor(
     private val ytAuth: YtMusicAuthManager,
 ) {
     private val failedProfilesUntil = ConcurrentHashMap<String, Long>()
+    private val cipherConfigMutex = Mutex()
+    @Volatile private var cachedCipherConfig: CachedCipherConfig? = null
     private val runtime: RuntimeStack? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         runCatching { createRuntime() }
             .onFailure { Log.w(TAG, "InnerTubeX unavailable; legacy resolver remains fallback", it) }
             .getOrNull()
+    }
+
+    /** Warm the reusable player config while the app is idle, ahead of the first tap. */
+    suspend fun prewarm(visitorData: String?) = withContext(Dispatchers.IO) {
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        ytAuth.awaitLoadedConnection()
+        val stack = runtime ?: return@withContext
+        val connection = ytAuth.connection.value
+        setProperty(stack.innerTube, "VisitorData", visitorData)
+        setProperty(stack.innerTube, "Cookie", ytAuth.cookieHeaderValue())
+        setProperty(stack.innerTube, "UseLoginForBrowse", connection.isConnected)
+        val context = fetchCipherContext(PREWARM_VIDEO_ID) ?: return@withContext
+        // Compile the exact player used by our WEB_REMIX request. Warming the
+        // extractor separately can select another player and duplicate downloads.
+        val preload = stack.cipher.javaClass.methods.first {
+            it.name == "preloadPlayerCode" && it.parameterCount == 2
+        }
+        invokeSuspend(stack.cipher, preload, arrayOf(context.playerUrl))
+        Log.i(TAG, "stage=cipher-prewarm ready elapsedMs=${android.os.SystemClock.elapsedRealtime() - startedAt}")
     }
 
     suspend fun resolve(
@@ -49,7 +72,8 @@ class InnerTubeXStreamExtractor @Inject constructor(
             setProperty(stack.innerTube, "Cookie", ytAuth.cookieHeaderValue())
             setProperty(stack.innerTube, "UseLoginForBrowse", connection.isConnected)
 
-            val hints = newInstance("com.metrolist.innertubex.extraction.ContentHints")
+            // Supply the primitive defaults explicitly across the reflective boundary.
+            val hints = newContentHints()
             val withCapabilities = hints.javaClass.methods.firstOrNull {
                 it.name == "withStreamCapabilities" && it.parameterCount == 3
             } ?: return@withContext null
@@ -86,7 +110,11 @@ class InnerTubeXStreamExtractor @Inject constructor(
             null
         } catch (error: Exception) {
             logDiagnostics(videoId, error)
-            Log.w(TAG, "InnerTubeX extraction failed for ${videoId.take(32)} (${error::class.simpleName})")
+            Log.w(
+                TAG,
+                "InnerTubeX extraction failed for ${videoId.take(32)} " +
+                    "(${error::class.simpleName}: ${error.message.orEmpty().take(160)})",
+            )
             null
         }
     }
@@ -98,14 +126,26 @@ class InnerTubeXStreamExtractor @Inject constructor(
         try {
             setProperty(stack.innerTube, "Cookie", ytAuth.cookieHeaderValue(account))
             setProperty(stack.innerTube, "UseLoginForBrowse", account.isConnected)
-            val fetchConfig = stack.parser.javaClass.methods.first {
-                it.name == "fetchConfig" && it.parameterCount == 3
+            cipherConfigMutex.withLock {
+                cachedCipherConfig
+                    ?.takeIf { it.account == account && it.expiresAtEpochMs > System.currentTimeMillis() }
+                    ?.let { return@withLock it }
+                val fetchConfig = stack.parser.javaClass.methods.first {
+                    it.name == "fetchConfig" && it.parameterCount == 3
+                }
+                val config = invokeSuspend(stack.parser, fetchConfig, arrayOf(videoId, account.isConnected))
+                    ?: return@withLock null
+                val playerUrl = readString(config, "getPlayerUrl") ?: return@withLock null
+                val timestamp = readInt(config, "getSignatureTimestamp") ?: return@withLock null
+                CachedCipherConfig(
+                    playerUrl = playerUrl,
+                    signatureTimestamp = timestamp,
+                    account = account,
+                    expiresAtEpochMs = System.currentTimeMillis() + CIPHER_CONFIG_TTL_MS,
+                ).also { cachedCipherConfig = it }
             }
-            val config = invokeSuspend(stack.parser, fetchConfig, arrayOf(videoId, account.isConnected))
-                ?: return@withContext null
-            val playerUrl = readString(config, "getPlayerUrl") ?: return@withContext null
-            val timestamp = readInt(config, "getSignatureTimestamp") ?: return@withContext null
-            PlaybackCipherContext(videoId, playerUrl, timestamp, account).also {
+                ?.let { cached -> PlaybackCipherContext(videoId, cached.playerUrl, cached.signatureTimestamp, account) }
+                ?.also {
                 it.requireMatches(videoId, ytAuth.connection.value)
             }
         } catch (error: kotlinx.coroutines.CancellationException) {
@@ -116,7 +156,7 @@ class InnerTubeXStreamExtractor @Inject constructor(
         }
     }
 
-    /** Local QuickJS/EJS fallback for ciphers NewPipe cannot parse. No remote cipher service. */
+    /** Local Kotlin solver for ciphers NewPipe cannot parse. */
     internal suspend fun decipherAudioUrls(
         videoId: String,
         ciphers: List<String>,
@@ -125,7 +165,8 @@ class InnerTubeXStreamExtractor @Inject constructor(
     ): Map<String, String> =
         withContext(Dispatchers.IO) {
             if (ciphers.isEmpty() && directUrls.isEmpty()) return@withContext emptyMap()
-            Log.i(TAG, "stage=local-cipher begin")
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            Log.i(TAG, "stage=local-cipher begin videoId=$videoId")
             val stack = runtime ?: return@withContext emptyMap()
             Log.i(TAG, "stage=local-cipher runtime-ready")
             try {
@@ -139,7 +180,7 @@ class InnerTubeXStreamExtractor @Inject constructor(
                     "serializer",
                 ) as DeserializationStrategy<Any>
                 val inputs = playbackCipherInputs(ciphers, directUrls)
-                // processFormats batches signatures and n challenges into one local EJS execution.
+                // The compiled player is reused; repeated signature/n challenges are solved once.
                 val formats = inputs.map { input ->
                     Json.decodeFromString(serializer, input.toFormatJson().toString())
                 }
@@ -158,7 +199,7 @@ class InnerTubeXStreamExtractor @Inject constructor(
                         result[input.source] = url
                     }
                 }
-                Log.i(TAG, "stage=local-cipher requested=${inputs.size} cipherCount=${ciphers.size} directCount=${directUrls.size} decoded=${result.size}")
+                Log.i(TAG, "stage=local-cipher videoId=$videoId requested=${inputs.size} cipherCount=${ciphers.size} directCount=${directUrls.size} decoded=${result.size} elapsedMs=${android.os.SystemClock.elapsedRealtime() - startedAt}")
                 result
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
@@ -248,7 +289,7 @@ class InnerTubeXStreamExtractor @Inject constructor(
         )
         val parser = constructWithDefaults(
             "com.metrolist.innertubex.extraction.YtConfigParserImpl",
-            arrayOf(httpClient, innerTube, configStore),
+            arrayOf(httpClient, innerTube, configStore, null, cipher),
             defaultMask = 8,
         )
         val extractor = constructWithDefaults(
@@ -345,6 +386,15 @@ class InnerTubeXStreamExtractor @Inject constructor(
     private fun newInstance(className: String): Any =
         Class.forName(className).getDeclaredConstructor().newInstance()
 
+    private fun newContentHints(): Any {
+        val type = Class.forName("com.metrolist.innertubex.extraction.ContentHints")
+        val constructor = type.declaredConstructors.firstOrNull { it.parameterCount == CONTENT_HINTS_PARAMETER_COUNT }
+            ?: error("No compatible ContentHints constructor")
+        constructor.isAccessible = true
+        // Primitive booleans must receive values even when using Kotlin defaults.
+        return constructor.newInstance(null, null, null, null, null, null, null, false, null, false, null)
+    }
+
     private fun enumValue(className: String, name: String): Any =
         (Class.forName(className).enumConstants as Array<*>).first { (it as Enum<*>).name == name }!!
 
@@ -399,8 +449,18 @@ class InnerTubeXStreamExtractor @Inject constructor(
         val cipher: Any,
     )
 
+    private data class CachedCipherConfig(
+        val playerUrl: String,
+        val signatureTimestamp: Int,
+        val account: com.lastwave.app.data.ytmusic.YtConnection,
+        val expiresAtEpochMs: Long,
+    )
+
     private companion object {
         const val TAG = "InnerTubeXStreamExtractor"
+        const val CONTENT_HINTS_PARAMETER_COUNT = 11
+        const val PREWARM_VIDEO_ID = "dQw4w9WgXcQ"
+        const val CIPHER_CONFIG_TTL_MS = 3 * 60 * 60 * 1_000L
         const val UNKNOWN_STREAM_EXPIRY_TTL_MS = 5 * 60 * 1_000L
         const val CLIENT_FAILURE_COOLDOWN_MS = 60_000L
     }
