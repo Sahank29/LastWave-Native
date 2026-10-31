@@ -108,6 +108,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BubbleChart
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Dashboard
@@ -129,6 +130,7 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.SpeakerPhone
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Language
@@ -413,6 +415,13 @@ enum class SettingsTab(
     val subtitle: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
 ) {
+    SAHANK29(
+        titleRes = R.string.settings,
+        subtitleRes = R.string.set_cat_audio_sub,
+        title = "Sahank29 setting",
+        subtitle = "Personal playback options",
+        icon = Icons.Filled.Tune,
+    ),
     AUDIO(
         titleRes = R.string.set_cat_audio,
         subtitleRes = R.string.set_cat_audio_sub,
@@ -847,6 +856,23 @@ fun SettingsScreen(
 
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                SectionLabel("Custom")
+                                SettingsGroup(rowCount = 1) { _, position ->
+                                    SettingsActionCard(
+                                        icon = Icons.Filled.Tune,
+                                        iconContainer = MaterialTheme.colorScheme.secondaryContainer,
+                                        iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        title = "Sahank29 setting",
+                                        subtitle = "Personal playback options",
+                                        onClick = { activeTab = SettingsTab.SAHANK29 },
+                                        position = position,
+                                    )
+                                }
+                            }
+                        }
+
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 SectionLabel("System & About")
                                 SettingsGroup(rowCount = 2) { index, position ->
                                     when (index) {
@@ -867,6 +893,48 @@ fun SettingsScreen(
                                             subtitle = if (updateInfo.isUpdateAvailable) "Update Available (${updateInfo.latestVersion}) \u2022 v${appVersionName(context)}" else "v${appVersionName(context)} \u2022 Language, Community, Source code",
                                             onClick = { activeTab = SettingsTab.ABOUT },
                                             position = position,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    SettingsTab.SAHANK29 -> {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                SectionLabel("Playback")
+                                SettingsGroup(rowCount = 2) { index, position ->
+                                    when (index) {
+                                        0 -> SettingsToggleCard(
+                                            icon = Icons.Filled.Speed,
+                                            iconContainer = MaterialTheme.colorScheme.secondaryContainer,
+                                            iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            title = "Start playback faster",
+                                            subtitle = if (misc.startPlaybackQuickly) {
+                                                "Start with available audio, then try a lossless upgrade"
+                                            } else {
+                                                "Wait up to 5 seconds for lossless audio before starting"
+                                            },
+                                            checked = misc.startPlaybackQuickly,
+                                            onCheckedChange = viewModel::setStartPlaybackQuickly,
+                                            position = position,
+                                            isHighlighted = (highlightedSettingId == "audio.quick_start"),
+                                        )
+                                        else -> SettingsToggleCard(
+                                            icon = Icons.Filled.SignalCellularAlt,
+                                            iconContainer = MaterialTheme.colorScheme.secondaryContainer,
+                                            iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            title = "Allow lossless upgrades over cellular",
+                                            subtitle = if (misc.allowLosslessUpgradeOnCellular) {
+                                                "Automatic lossless upgrades may use mobile data"
+                                            } else {
+                                                "Automatic lossless upgrades use Wi-Fi only"
+                                            },
+                                            checked = misc.allowLosslessUpgradeOnCellular,
+                                            onCheckedChange = viewModel::setAllowLosslessUpgradeOnCellular,
+                                            position = position,
+                                            isHighlighted = (highlightedSettingId == "audio.cellular_lossless_upgrade"),
                                         )
                                     }
                                 }
@@ -3295,11 +3363,11 @@ fun SettingsScreen(
 }
 
 private fun appVersionName(context: android.content.Context): String = try {
-    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "5.0.0"
+    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "5.0.0-0.1.0"
 } catch (error: Exception) {
-    "5.0.0"
+    "5.0.0-0.1.0"
 } catch (error: LinkageError) {
-    "5.0.0"
+    "5.0.0-0.1.0"
 }
 
 /** Small tap-scale used across the row-style cards on this screen for a

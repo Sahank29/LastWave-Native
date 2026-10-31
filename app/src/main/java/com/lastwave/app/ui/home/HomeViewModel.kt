@@ -383,6 +383,25 @@ class HomeViewModel @Inject constructor(
         return nowPlayingHome to (recentAsHome + extra)
     }
 
+    /** Publish the lightest Home request without waiting for stats/top tracks. */
+    private suspend fun loadRecentPreview(username: String) {
+        homeRepository.fetchRecentTracks(limit = 50, username = username).onSuccess { page ->
+            val (nowPlaying, tracks) = mergeRecentWithTop(page.nowPlaying, page.tracks, emptyList())
+            _uiState.update { state ->
+                // A profile switch or completed full load owns the screen now.
+                if (!state.isLoading || state.viewingUsername != username) state
+                else state.copy(
+                    isLoading = false,
+                    isLocalStatsMode = false,
+                    nowPlaying = nowPlaying,
+                    allTracks = tracks,
+                    page = page.page,
+                    totalPages = page.totalPages,
+                )
+            }
+        }
+    }
+
     private fun loadInitial() {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoading = true, error = null) }
@@ -391,7 +410,10 @@ class HomeViewModel @Inject constructor(
                 loadLocalStats(username)
                 return@launch
             }
+            _uiState.update { it.copy(username = username, viewingUsername = username) }
+            launch { loadRecentPreview(username) }
             val result = homeRepository.fetchInitialData()
+            if (_uiState.value.viewingUsername != username) return@launch
             result.fold(
                 onSuccess = { data ->
                     cachedTopTracks = data.topTracks
@@ -752,7 +774,9 @@ class HomeViewModel @Inject constructor(
                     topTracks30Days = emptyList(),
                 )
             }
+            launch { loadRecentPreview(username) }
             val result = homeRepository.fetchInitialData(username = username)
+            if (_uiState.value.viewingUsername != username) return@launch
             result.fold(
                 onSuccess = { data ->
                     cachedTopTracks = data.topTracks

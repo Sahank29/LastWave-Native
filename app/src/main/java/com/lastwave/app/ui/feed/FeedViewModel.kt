@@ -237,7 +237,7 @@ class FeedViewModel @Inject constructor(
             val self = coroutineContext[Job]
             _uiState.update {
                 it.copy(
-                    isLoading = !refreshing || it.isLoading,
+                    isLoading = it.isLoading,
                     isRefreshing = refreshing,
                     error = null,
                     selectedChip = if (refreshing) null else it.selectedChip,
@@ -271,7 +271,6 @@ class FeedViewModel @Inject constructor(
                 if (ytAuth.connection.value != connection ||
                     sessionPreferences.session.value.username.takeIf(String::isNotBlank) != username
                 ) return@launch
-                val stats = homeRepository.fetchStats().getOrNull()
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -279,7 +278,6 @@ class FeedViewModel @Inject constructor(
                         feedData = data,
                         defaultContinuationToken = data.homeContinuationToken,
                         error = null,
-                        avatarUrl = stats?.avatarUrl ?: it.avatarUrl,
                     )
                 }
                 lastLoadedMillis = System.currentTimeMillis()

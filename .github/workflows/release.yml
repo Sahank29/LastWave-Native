@@ -131,7 +131,7 @@ jobs:
             echo "::error::apksigner not found under $SDKROOT — refusing to publish unverified APKs"
             exit 1
           fi
-          EXPECTED_CERT_SHA256="${EXPECTED_CERT_SHA256:-ed79fe6f}"
+          EXPECTED_CERT_SHA256="${EXPECTED_CERT_SHA256:-92c53620}"
           for apk in final_apk/*.apk; do
             echo "Verifying $apk ..."
             "$APKSIGNER" verify --print-certs "$apk" > /dev/null || { echo "::error::APK failed signature verification: $apk"; exit 1; }
