@@ -120,7 +120,7 @@ Built with **Material 3 Expressive**, LastWave combines effortless ad-free strea
 ## <img src="https://api.iconify.design/lucide/rocket.svg?color=%23C6F100" width="20" height="20" align="center" /> Getting Started
 
 1. Download the latest APK from this fork's **[Releases](https://github.com/Sahank29/LastWave-Native/releases)** or **[Actions](https://github.com/Sahank29/LastWave-Native/actions)** tab.
-2. Install the APK from the latest Actions artifact. Fork builds use `upstream-fork` version labels, such as `5.0.0-0.0.1`.
+2. Install the APK from the latest Actions artifact. Fork builds use `upstream-fork` version labels, such as `5.0.0-0.1.0`.
 3. Connect your Last.fm account in **Settings → Integrations** to unlock the scrobbler, taste mixes, and personalized discovery radar.
 4. Enjoy ad-free streaming and smart playlist generation!
 
