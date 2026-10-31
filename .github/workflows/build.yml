@@ -2,22 +2,21 @@ name: Build LastWave APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ sahank29-main ]
     paths-ignore:
       - '**.md'
       - 'Screenshot/**'
-      - '**.yml'
   pull_request:
-    branches: [ main, master ]
+    branches: [ sahank29-main ]
     paths-ignore:
       - '**.md'
       - 'Screenshot/**'
-      - '**.yml'
   workflow_dispatch:
 
 jobs:
   build:
     name: Build Release APK
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/sahank29-main'
     runs-on: ubuntu-latest
     env:
       SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
