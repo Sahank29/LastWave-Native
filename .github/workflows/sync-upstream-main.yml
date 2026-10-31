@@ -1,0 +1,57 @@
+name: Sync upstream main
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync upstream main and open integration PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Sync only the fork's main branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh repo sync "$GITHUB_REPOSITORY"
+          --source Clash-Projects/LastWave-Native
+          --branch main
+
+      - name: Open an integration PR when upstream has new commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          upstream_commits=$(gh api "repos/${GITHUB_REPOSITORY}/compare/sahank29-main...main" --jq '.ahead_by')
+          if [ "$upstream_commits" -eq 0 ]; then
+            echo "main has no commits ahead of sahank29-main. Nothing to open."
+            exit 0
+          fi
+
+          existing_pr=$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --base sahank29-main \
+            --head "${GITHUB_REPOSITORY_OWNER}:main" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "$existing_pr" ]; then
+            echo "Integration PR #$existing_pr already tracks main; it will include the new upstream commits."
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base sahank29-main \
+            --head "${GITHUB_REPOSITORY_OWNER}:main" \
+            --title "Sync upstream main into sahank29-main" \
+            --body "This PR brings upstream main into the protected integration branch. Review and merge it to update the fork's build branch."
