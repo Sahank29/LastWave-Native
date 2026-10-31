@@ -253,6 +253,7 @@ class InnerTubeMusicApi @Inject constructor(
     private val matchCache = ConcurrentHashMap<String, YouTubeMusicTrack>()
     private val streamCache = ConcurrentHashMap<StreamCacheKey, CachedStream>()
     private val activeStreamRequests = ConcurrentHashMap<String, SharedStreamRequest>()
+    private val playbackUrlValidation = PlaybackUrlValidationPolicy()
     @Volatile
     private var podcastEpisodesFilter: String? = null
     private val apiScope = CoroutineScope(
@@ -288,8 +289,11 @@ class InnerTubeMusicApi @Inject constructor(
     fun reportPlaybackFailure(videoId: String, rejected: YouTubeAudioStream? = null) {
         val stream = rejected ?: lastResolvedStreams[resolutionKey(videoId, playbackAuthScope())]
         if (stream != null && stream.clientProfile != NEWPIPE_SOURCE) {
-            failedClientsUntil[clientFailureKey(videoId, stream.clientProfile, stream.authScope)] =
-                System.currentTimeMillis() + CLIENT_COOLDOWN_MS
+            val retryWithProbe = playbackUrlValidation.retryWithProbe(videoId, stream.authScope, stream.clientProfile)
+            if (!retryWithProbe) {
+                failedClientsUntil[clientFailureKey(videoId, stream.clientProfile, stream.authScope)] =
+                    System.currentTimeMillis() + CLIENT_COOLDOWN_MS
+            }
             if (stream.clientProfile.startsWith("INNERTUBEX:")) {
                 innerTubeXExtractor.reportPlaybackFailure(videoId, stream.authScope, stream.clientProfile)
             }
@@ -1981,6 +1985,9 @@ class InnerTubeMusicApi @Inject constructor(
                 }
             )
             .take(limit)
+        // Keep search warming bounded: every prefetch can trigger several
+        // YouTube player clients, so fanning out across five songs can contend
+        // with the selected track and trigger BotGuard throttling on cold start.
         if (prefetchStreams) finalResults.take(2).forEach { prefetchStream(it.videoId) }
         finalResults
     }
@@ -3110,9 +3117,13 @@ class InnerTubeMusicApi @Inject constructor(
                 lastVisitorBootstrapAttemptMs = now
                 visitorData = runCatching {
                     kotlinx.coroutines.withTimeoutOrNull(VISITOR_BOOTSTRAP_BUDGET_MS) {
-                        getWebConfig()
-                    }?.visitorData
+                        fetchFreshVisitorData()
+                    }
                 }.getOrNull()?.takeIf { it != FALLBACK_TOKEN_SESSION } ?: visitorData
+                if (!visitorData.isNullOrBlank() && visitorData != FALLBACK_TOKEN_SESSION) {
+                    webConfig = (webConfig ?: WebConfig(FALLBACK_WEB_KEY, FALLBACK_WEB_VERSION, visitorData))
+                        .copy(visitorData = visitorData)
+                }
             }
             noteAttempt("direct-fast=visitor-${if (!visitorData.isNullOrBlank()) "ok" else "missing"}")
         }
@@ -3171,7 +3182,7 @@ class InnerTubeMusicApi @Inject constructor(
                         playerPoToken = if (client.needsPoToken) poToken?.playerToken else null,
                         gvsPoToken = if (client.needsGvsPoToken) poToken?.sessionToken else null,
                         authScope = authScope,
-                        probeCandidates = true,
+                        probeCandidates = playbackUrlValidation.requiresProbe(videoId, authScope),
                         allowCipherFormats = client.name == "TVHTML5_SIMPLY_EMBEDDED_PLAYER" || client.name == "WEB_REMIX" || client.name == "IOS" || client.name == "TVHTML5",
                         maxAttempts = 1,
                     )
@@ -3202,12 +3213,13 @@ class InnerTubeMusicApi @Inject constructor(
         kotlinx.coroutines.coroutineScope {
         val now = System.currentTimeMillis()
 
-        // Use whichever validated source finishes first. In particular, a usable
-        // NewPipe URL must not wait for every authenticated client to miss.
+        // A signed-in direct stream normally wins before the fallback hedge.
+        // Start fallback immediately on a miss, or after a short slow-request window.
         val resolved = try {
             racePlaybackCandidates(
                 first = { resolveDirectUrlFastPath(videoId, authScope) },
                 second = { racePlayableFallback(videoId, authScope, now, startedAt) },
+                secondDelayMs = if (ytAuth.connection.value.isConnected) PLAYBACK_FALLBACK_HEDGE_MS else 0L,
             )
         } catch (error: Throwable) {
             if (error.isCooperativeCancellation()) throw error
@@ -3505,12 +3517,15 @@ class InnerTubeMusicApi @Inject constructor(
                     .thenByDescending { it.bitrate },
             )
         noteAttempt("client=${client.name} compatibleCandidates=${candidates.size} cipherAllowed=$allowCipherFormats")
-        // Probe full playback ranges before choosing a format. Tiny probes can
-        // succeed even when the media request itself will receive HTTP 403.
+        // The player's media GET validates the first URL without a duplicate CDN round trip.
         if (!probeCandidates) {
-            return candidates.firstOrNull()
+            val candidate = candidates.firstOrNull()
                 ?: throw IOException("${client.key} returned no usable audio URL")
+            playbackUrlValidation.recordUnverified(videoId, authScope, client.key)
+            noteAttempt("client=${client.name} validation=player-first")
+            return candidate
         }
+        // On a rejected-URL retry, validate full playback ranges and try alternate formats.
         for (candidate in candidates.take(MAX_FORMAT_PROBES_PER_CLIENT)) {
             if (probeStream(candidate, "client-probe")) return candidate
         }
@@ -3864,8 +3879,32 @@ class InnerTubeMusicApi @Inject constructor(
      *  blocking fetch. Safe to call from a startup coroutine; never throws. */
     suspend fun preWarmPlayback() {
         val config = runCatching { getWebConfig() }.getOrNull()
-        val visitor = config?.visitorData ?: FALLBACK_TOKEN_SESSION
-        runCatching { BotGuardTokenGenerator.preWarm(visitor) }
+        val visitor = config?.visitorData
+            ?.takeIf { it != FALLBACK_TOKEN_SESSION }
+            ?: runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(VISITOR_BOOTSTRAP_BUDGET_MS) {
+                    fetchFreshVisitorData()
+                }
+            }.getOrNull()
+            ?: FALLBACK_TOKEN_SESSION
+        if (visitor != FALLBACK_TOKEN_SESSION) {
+            webConfig = (webConfig ?: WebConfig(FALLBACK_WEB_KEY, FALLBACK_WEB_VERSION, visitor))
+                .copy(visitorData = visitor)
+        }
+        // These warm independent resources; neither should delay the other at launch.
+        kotlinx.coroutines.coroutineScope {
+            launch { BotGuardTokenGenerator.preWarm(visitor) }
+            launch {
+                runCatching {
+                    kotlinx.coroutines.withTimeoutOrNull(INNERTUBEX_PREWARM_TIMEOUT_MS) {
+                        innerTubeXExtractor.prewarm(visitor.takeUnless { it == FALLBACK_TOKEN_SESSION })
+                    }
+                }.onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    android.util.Log.w(STREAM_LOG_TAG, "stage=cipher-prewarm failed=${error.javaClass.simpleName}")
+                }
+            }
+        }
     }
 
     private suspend fun getWebConfig(): WebConfig {
@@ -5264,6 +5303,8 @@ class InnerTubeMusicApi @Inject constructor(
         const val STREAM_RESOLVE_TOTAL_TIMEOUT_MS = 40_000L
         /** Bound for the InnerTubeX cipher stage so a hung resolve fails fast. */
         const val INNERTUBEX_STAGE_TIMEOUT_MS = 7_000L
+        const val INNERTUBEX_PREWARM_TIMEOUT_MS = 15_000L
+        const val PLAYBACK_FALLBACK_HEDGE_MS = 1_500L
         /** Bound for the last-resort NewPipe stage. */
         const val NEWPIPE_FALLBACK_TIMEOUT_MS = 9_000L
         /** Overall budget for promoting a staged YouTube stream from MusicPlayer. */

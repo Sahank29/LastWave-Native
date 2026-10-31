@@ -61,8 +61,8 @@ android {
         minSdk = (project.findProperty("minSdk") as? String)?.toIntOrNull() ?: 29
         targetSdk = 35
         // Keep this increasing for every fork release; it is independent of the display label.
-        versionCode = 27010
-        versionName = "5.0.0-0.1.0"
+        versionCode = 27011
+        versionName = "5.0.0-0.1.1"
 
         (project.findProperty("targetAbis") as? String)?.let { prop ->
             ndk {

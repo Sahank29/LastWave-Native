@@ -44,8 +44,11 @@ data class PoTokenResult(
  */
 object BotGuardTokenGenerator {
     private const val TAG = "BotGuardTokenGen"
-    private const val CREATE_URL = "https://www.youtube.com/api/jnn/v1/Create"
-    private const val GENERATE_IT_URL = "https://www.youtube.com/api/jnn/v1/GenerateIT"
+    private const val WAA_API_BASE = "https://jnn-pa.googleapis.com/\$rpc/google.internal.waa.v1.Waa"
+    private const val CREATE_URL = "$WAA_API_BASE/Create"
+    private const val GENERATE_IT_URL = "$WAA_API_BASE/GenerateIT"
+    // Public client key used by YouTube's Web Anti-Abuse API.
+    private const val WAA_API_KEY = "AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw"
     private const val REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
     private const val JS_BRIDGE = "BotGuardBridge"
 
@@ -264,8 +267,13 @@ object BotGuardTokenGenerator {
         fun onPageLoaded() {
             scope.launch(Dispatchers.IO) {
                 runCatching {
-                    val requestBody = "[ \"$REQUEST_KEY\" ]".toRequestBody("application/json".toMediaType())
-                    val request = Request.Builder().url(CREATE_URL).post(requestBody).build()
+                    val requestBody = "[ \"$REQUEST_KEY\" ]".toRequestBody("application/json+protobuf".toMediaType())
+                    val request = Request.Builder()
+                        .url(CREATE_URL)
+                        .header("x-goog-api-key", WAA_API_KEY)
+                        .header("x-user-agent", "grpc-web-javascript/0.1")
+                        .post(requestBody)
+                        .build()
                     val response = httpClient.newCall(request).execute().use { it.body?.string().orEmpty() }
                     val challengeJson = parseCreateChallenge(response)
 
@@ -297,8 +305,14 @@ object BotGuardTokenGenerator {
             scope.launch(Dispatchers.IO) {
                 runCatching {
                     val safeResponse = botguardResponse.replace("\\", "\\\\").replace("\"", "\\\"")
-                    val requestBody = "[ \"$REQUEST_KEY\", \"$safeResponse\" ]".toRequestBody("application/json".toMediaType())
-                    val request = Request.Builder().url(GENERATE_IT_URL).post(requestBody).build()
+                    val requestBody = "[ \"$REQUEST_KEY\", \"$safeResponse\" ]".toRequestBody("application/json+protobuf".toMediaType())
+                    val request = Request.Builder()
+                        .url(GENERATE_IT_URL)
+                        .header("Accept", "application/json")
+                        .header("x-goog-api-key", WAA_API_KEY)
+                        .header("x-user-agent", "grpc-web-javascript/0.1")
+                        .post(requestBody)
+                        .build()
                     val response = httpClient.newCall(request).execute().use { it.body?.string().orEmpty() }
                     val (tokenU8, lifetimeSec) = parseIntegrityToken(response)
                     expiresAtMs = System.currentTimeMillis() + (lifetimeSec - 300L) * 1000L

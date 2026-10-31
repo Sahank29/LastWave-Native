@@ -95,7 +95,7 @@ class SearchRepository @Inject constructor(
         }
 
         val results = when (tab) {
-            SearchTab.TRACKS -> innerTube.searchSongs(trimmed).map { track ->
+            SearchTab.TRACKS -> innerTube.searchSongs(trimmed, prefetchStreams = true).map { track ->
                 SearchResultItem(
                     name = track.title,
                     artist = track.artist,

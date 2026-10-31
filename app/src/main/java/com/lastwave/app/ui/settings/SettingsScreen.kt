@@ -3363,11 +3363,11 @@ fun SettingsScreen(
 }
 
 private fun appVersionName(context: android.content.Context): String = try {
-    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "5.0.0-0.1.0"
+    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "5.0.0-0.1.1"
 } catch (error: Exception) {
-    "5.0.0-0.1.0"
+    "5.0.0-0.1.1"
 } catch (error: LinkageError) {
-    "5.0.0-0.1.0"
+    "5.0.0-0.1.1"
 }
 
 /** Small tap-scale used across the row-style cards on this screen for a

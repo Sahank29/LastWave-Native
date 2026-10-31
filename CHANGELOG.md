@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.0.0-0.1.1] - 2026-10-31
+
+### Fixed
+- **Playback Startup:** Reduce uncached Home playback delays; measured 1.24–1.54 seconds from a playback request to playing on the connected test tablet, with results depending on the connection and startup state.
+- **Faster Cipher Resolution:** Upgrade InnerTubeX to 0.11.2 and prewarm the account-bound player configuration and compiled Kotlin solver while retaining all audio-format choices.
+- **Fallback Scheduling:** Return the winning stream without waiting for a cancelled blocking extractor. Start the signed-in fallback only when the primary misses or exceeds a short startup window.
+- **Fewer Network Round Trips:** Use the player's first media request to validate a direct URL, with a validated format retry if that URL is rejected.
+- **YouTube Session Recovery:** Refresh visitor data when needed and update BotGuard request endpoints and headers. Preserve automatic lossless upgrades and active-stream quality reporting.
+
 ## [5.0.0-0.1.0] - 2026-10-31
 
 ### Added & Improved
