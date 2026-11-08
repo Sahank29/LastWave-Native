@@ -55,9 +55,7 @@ class NetworkMonitor @Inject constructor(
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
     }.getOrDefault(false)
 
-    /**
-     * Hot reactive state flow emitting true when online and false when offline.
-     */
+    /** Hot reactive state flow emitting true when online and false when offline. */
     val isOnline: StateFlow<Boolean> = callbackFlow {
         val cm = connectivityManager
         if (cm == null) {
@@ -82,25 +80,53 @@ class NetworkMonitor @Inject constructor(
         }
 
         trySend(isCurrentlyConnected())
-
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
-
-        runCatching {
-            cm.registerNetworkCallback(request, callback)
-        }
-
-        awaitClose {
-            runCatching {
-                cm.unregisterNetworkCallback(callback)
-            }
-        }
+        runCatching { cm.registerNetworkCallback(request, callback) }
+        awaitClose { runCatching { cm.unregisterNetworkCallback(callback) } }
     }
         .distinctUntilChanged()
         .stateIn(
             scope = scope,
             started = SharingStarted.Eagerly,
             initialValue = isCurrentlyConnected(),
+        )
+
+    /** Hot state that lets artwork switch resolution when the active transport changes. */
+    val isCellular: StateFlow<Boolean> = callbackFlow {
+        val cm = connectivityManager
+        if (cm == null) {
+            trySend(false)
+            awaitClose { }
+            return@callbackFlow
+        }
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                trySend(isOnCellular())
+            }
+
+            override fun onLost(network: Network) {
+                trySend(isOnCellular())
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                trySend(isOnCellular())
+            }
+        }
+
+        trySend(isOnCellular())
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        runCatching { cm.registerNetworkCallback(request, callback) }
+        awaitClose { runCatching { cm.unregisterNetworkCallback(callback) } }
+    }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = scope,
+            started = SharingStarted.Eagerly,
+            initialValue = isOnCellular(),
         )
 }
